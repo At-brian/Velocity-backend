@@ -86,3 +86,25 @@ app.delete('/api/sprints/team/:team_id', async (req, res) => {
 app.listen(port, () => {
   console.log(`API server running on port ${port}`);
 });
+
+async function initCapacityTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS capacities (
+      id SERIAL PRIMARY KEY,
+      team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+      sprint_id INTEGER NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
+      days_sprint INTEGER NOT NULL,
+      percent_run NUMERIC(5,2) DEFAULT 100,
+      date_calculated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS capacity_roles (
+      id SERIAL PRIMARY KEY,
+      capacity_id INTEGER NOT NULL REFERENCES capacities(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      nbr_personnes INTEGER NOT NULL,
+      jours_absence NUMERIC(5,2) DEFAULT 0
+    );
+  `);
+}
+initCapacityTables();
+
