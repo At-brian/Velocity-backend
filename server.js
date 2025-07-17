@@ -18,7 +18,7 @@ const pool = new Pool({
     : undefined,
 });
 
-// Table creation automatique (optionnel)
+// --- CRÉATION AUTOMATIQUE DES TABLES ---
 async function initTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS teams (
@@ -32,13 +32,30 @@ async function initTables() {
       capacity INTEGER,
       done INTEGER
     );
+    CREATE TABLE IF NOT EXISTS capacities (
+      id SERIAL PRIMARY KEY,
+      team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+      sprint_id INTEGER NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
+      days_sprint INTEGER NOT NULL,
+      percent_run NUMERIC(5,2) DEFAULT 100,
+      date_calculated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS capacity_roles (
+      id SERIAL PRIMARY KEY,
+      capacity_id INTEGER NOT NULL REFERENCES capacities(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      nbr_personnes INTEGER NOT NULL,
+      jours_absence NUMERIC(5,2) DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS roles (
+      id SERIAL PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL
+    );
   `);
 }
 initTables();
 
-// --- ROUTES ---
-
-// Teams
+// --- ROUTES ÉQUIPES ---
 app.get('/api/teams', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM teams ORDER BY name');
   res.json(rows);
@@ -59,7 +76,7 @@ app.delete('/api/teams/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-// Sprints
+// --- ROUTES SPRINTS ---
 app.get('/api/sprints/:team_id', async (req, res) => {
   const { rows } = await pool.query(
     'SELECT * FROM sprints WHERE team_id=$1 ORDER BY id', [req.params.team_id]
@@ -83,28 +100,19 @@ app.delete('/api/sprints/team/:team_id', async (req, res) => {
   res.json({ success: true });
 });
 
-app.listen(port, () => {
-  console.log(`API server running on port ${port}`);
-});
-
-// --- CAPACITIES ---
-// Liste des capacities d'une équipe (tous sprints)
+// --- ROUTES CAPACITÉS ---
 app.get('/api/capacities/:team_id', async (req, res) => {
   const { rows } = await pool.query(
     `SELECT * FROM capacities WHERE team_id=$1 ORDER BY date_calculated DESC`, [req.params.team_id]
   );
   res.json(rows);
 });
-
-// Récupère une capacité pour une équipe et un sprint précis
 app.get('/api/capacity/:team_id/:sprint_id', async (req, res) => {
   const { rows } = await pool.query(
     `SELECT * FROM capacities WHERE team_id=$1 AND sprint_id=$2`, [req.params.team_id, req.params.sprint_id]
   );
   res.json(rows[0] || null);
 });
-
-// Crée ou MAJ la capacité d'une équipe pour un sprint (upsert simple)
 app.post('/api/capacity', async (req, res) => {
   const { team_id, sprint_id, days_sprint, percent_run } = req.body;
   // Vérifie si la capacité existe déjà
@@ -131,17 +139,18 @@ app.post('/api/capacity', async (req, res) => {
   }
   res.json(cap);
 });
+app.delete('/api/capacity/:id', async (req, res) => {
+  await pool.query('DELETE FROM capacities WHERE id=$1', [req.params.id]);
+  res.json({ success: true });
+});
 
 // --- CAPACITY ROLES ---
-// Liste des rôles pour une capacité
 app.get('/api/capacity_roles/:capacity_id', async (req, res) => {
   const { rows } = await pool.query(
     `SELECT * FROM capacity_roles WHERE capacity_id=$1`, [req.params.capacity_id]
   );
   res.json(rows);
 });
-
-// Ajout ou mise à jour d'un rôle (si id fourni, fait update)
 app.post('/api/capacity_role', async (req, res) => {
   const { id, capacity_id, role, nbr_personnes, jours_absence } = req.body;
   if (id) {
@@ -159,32 +168,36 @@ app.post('/api/capacity_role', async (req, res) => {
     res.json(rows[0]);
   }
 });
-
-// Suppression d'un rôle
 app.delete('/api/capacity_role/:id', async (req, res) => {
   await pool.query('DELETE FROM capacity_roles WHERE id=$1', [req.params.id]);
   res.json({ success: true });
 });
 
-
-async function initCapacityTables() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS capacities (
-      id SERIAL PRIMARY KEY,
-      team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-      sprint_id INTEGER NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
-      days_sprint INTEGER NOT NULL,
-      percent_run NUMERIC(5,2) DEFAULT 100,
-      date_calculated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+// --- ROUTES ROLES ---
+// Table créée automatiquement plus haut !
+app.get('/api/roles', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM roles ORDER BY name');
+  res.json(rows);
+});
+app.post('/api/roles', async (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: "Nom du rôle requis" });
+  try {
+    const result = await pool.query(
+      'INSERT INTO roles(name) VALUES($1) RETURNING *', [name]
     );
-    CREATE TABLE IF NOT EXISTS capacity_roles (
-      id SERIAL PRIMARY KEY,
-      capacity_id INTEGER NOT NULL REFERENCES capacities(id) ON DELETE CASCADE,
-      role TEXT NOT NULL,
-      nbr_personnes INTEGER NOT NULL,
-      jours_absence NUMERIC(5,2) DEFAULT 0
-    );
-  `);
-}
-initCapacityTables();
+    res.json(result.rows[0]);
+  } catch (e) {
+    if (e.code === '23505') return res.status(409).json({ error: "Ce rôle existe déjà" });
+    throw e;
+  }
+});
+app.delete('/api/roles/:id', async (req, res) => {
+  await pool.query('DELETE FROM roles WHERE id = $1', [req.params.id]);
+  res.json({ success: true });
+});
 
+// --- DÉMARRAGE SERVEUR ---
+app.listen(port, () => {
+  console.log(`API server running on port ${port}`);
+});
